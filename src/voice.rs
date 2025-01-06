@@ -20,7 +20,7 @@ impl Voice {
         let pitch = self.base_freq + (self.pitch_variation * (time * self.rate).sin());
         let waveform =
             ((2.0 * PI * pitch * time).sin() + (4.0 * PI * pitch * time).sin() * 0.3) * 0.4;
-        waveform * ((time * 2.0).sin() * 0.3 + 0.7) // 动态音量变化，减少振幅波动
+        waveform * ((time * 2.0).sin() * 0.3 + 0.7) // Dynamic volume changes to reduce amplitude fluctuations
     }
 }
 
@@ -28,21 +28,21 @@ pub fn text_to_audio(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
-        .expect("未找到默认音频输出设备！");
+        .expect("Default audio output device not found.");
     let config = device.default_output_config()?;
 
     let sample_rate = config.sample_rate().0 as f32;
     let mut time = 0.0;
 
-    // 定义单词和字符的发音持续时间
-    let char_duration = 0.1; // 单个字符音效持续时间（秒）
-    let word_pause = 0.18; // 单词之间的间隔时间（秒）
+    // Define durations for characters and words
+    let char_duration = 0.1; // Duration for each character sound (in seconds)
+    let word_pause = 0.18; // Pause duration between words (in seconds)
 
-    // 根据文本生成音色列表
+    // Generate a list of voices based on the text
     let voices: Vec<(Voice, bool)> = text
-        .split_whitespace() // 按单词拆分
+        .split_whitespace() // Split text into words
         .flat_map(|word| {
-            let frenquence_flag = if word.contains(",") || word.contains(".") {
+            let frequency_flag = if word.contains(",") || word.contains(".") {
                 -1.
             } else {
                 1.
@@ -52,14 +52,14 @@ pub fn text_to_audio(text: &str) -> Result<(), Box<dyn std::error::Error>> {
                 .map(move |c| {
                     (
                         Voice::new(
-                            300.0 + frenquence_flag * ((c as u8) % 26) as f32,
-                            15.0 + pitch_offset,
-                            2.5,
+                            200.0 + frequency_flag * ((c as u8) % 26) as f32,
+                            10.0 + pitch_offset,
+                            1.5,
                         ),
                         false,
                     )
-                }) // 字符生成音色
-                .chain(std::iter::once((Voice::new(0.0, 0.0, 0.0), true))) // 单词间隔静音
+                }) // Generate a voice for each character
+                .chain(std::iter::once((Voice::new(0.0, 0.0, 0.0), true))) // Add silence between words
         })
         .collect();
 
@@ -74,10 +74,19 @@ pub fn text_to_audio(text: &str) -> Result<(), Box<dyn std::error::Error>> {
                     if index < voices.len() {
                         let (voice, is_pause) = &voices[index];
                         if *is_pause {
-                            *sample = 0.0; // 静音处理单词间隔
+                            *sample = 0.0; // Silence for word pauses
                         } else {
+                            // Apply fade-in and fade-out effects
+                            let fade_duration = 0.01; // Duration for fade-in and fade-out (in seconds)
+                            let amplitude = if char_time < fade_duration {
+                                char_time / fade_duration
+                            } else if char_time > char_duration - fade_duration {
+                                (char_duration - char_time) / fade_duration
+                            } else {
+                                1.0
+                            };
                             let raw_sample = voice.generate_sample(time);
-                            *sample = raw_sample * 0.9; // 限制最大振幅，减少失真
+                            *sample = raw_sample * amplitude * 0.9; // Limit maximum amplitude
                         }
 
                         time += 1.0 / sample_rate;
@@ -90,18 +99,18 @@ pub fn text_to_audio(text: &str) -> Result<(), Box<dyn std::error::Error>> {
                             char_time = 0.0;
                         }
                     } else {
-                        *sample = 0.0; // 静音，表示文本播放结束
+                        *sample = 0.0; // Silence indicates the end of the text
                     }
                 }
             },
-            |err| eprintln!("音频流错误：{}", err),
+            |err| eprintln!("Audio stream error: {}", err),
             None,
         )?,
-        _ => panic!("不支持的音频格式！"),
+        _ => panic!("Unsupported audio format."),
     };
 
     stream.play()?;
-    println!("正在生成文本音频，按 Ctrl+C 退出...");
+    println!("Generating audio from text, press Ctrl+C to exit...");
     std::thread::park();
 
     Ok(())
